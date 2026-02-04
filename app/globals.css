@@ -1,0 +1,207 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+/* Esconde a barra de rolagem mas mantém a função */
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+
+/* Scrollbar Personalizada Estilo Startup */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0A0A0B;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 10px;
+  transition: all 0.3s;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #ff0000; /* Vermelho no hover */
+}
+
+/* Esconder scrollbar dos carrosséis mas manter funcionalidade */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* --- SCROLLBAR ESTILIZADO (Adicione isso) --- */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;  /* Largura fina vertical */
+    height: 6px; /* Altura fina horizontal */
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent; /* Fundo invisível */
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #27272a; /* Cor padrão (Zinc-800) */
+    border-radius: 10px; /* Bordas arredondadas */
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #e11d48; /* Cor ao passar o mouse (Rose-600) */
+    cursor: pointer;
+  }
+}
+
+/* --- HACK PARA O GOOGLE TRANSLATE --- */
+
+/* Esconde a barra superior do Google */
+body {
+  top: 0 !important;
+}
+
+.skiptranslate {
+  display: none !important;
+}
+
+/* Esconde o iframe de tooltip do Google */
+.goog-te-banner-frame {
+  display: none !important;
+}
+
+#goog-gt-tt {
+  display: none !important;
+}
+
+/* Remove a margem extra que o Google adiciona */
+.goog-te-gadget {
+  height: 0 !important;
+  overflow: hidden;
+}
+
+/* Evita que o texto pisque durante o carregamento */
+font {
+  background-color: transparent !important;
+  box-shadow: none !important;
+  box-sizing: content-box !important;
+}
+
+/* Correção Google Translator */
+.goog-te-banner-frame.skiptranslate { display: none !important; }
+body { top: 0 !important; }
+#google_translate_element select {
+  background: transparent !important;
+  color: white !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 8px !important;
+  padding: 4px 8px !important;
+  font-size: 12px !important;
+  font-weight: bold !important;
+  outline: none !important;
+}
+/* Esconder a barra original do google */
+.goog-te-gadget {
+  font-family: inherit !important;
+  color: transparent !important;
+}
+
+/* Esconde a barra feia do Google que aparece no topo do site */
+.goog-te-banner-frame.skiptranslate {
+    display: none !important;
+}
+
+body {
+    top: 0 !important;
+}
+
+/* Estiliza o seletor do Google para combinar com seu modo Dark */
+#google_translate_element select {
+    background: #121214 !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 8px !important;
+    padding: 6px 12px !important;
+    font-size: 11px !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    outline: none !important;
+    cursor: pointer !important;
+}
+
+/* Remove o logo "Powered by Google" para ficar mais profissional */
+.goog-logo-link, .goog-te-gadget span {
+    display: none !important;
+}
+.goog-te-gadget {
+    color: transparent !important;
+}
+
+/* Container do seletor */
+.google-translate-container {
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+}
+
+/* Estiliza o Select que o Google cria */
+#google_translate_element select {
+    background-color: transparent !important;
+    color: white !important;
+    border: none !important;
+    font-size: 12px !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    cursor: pointer !important;
+    outline: none !important;
+}
+
+/* Esconde elementos desnecessários do Google */
+.goog-te-gadget span, .goog-logo-link {
+    display: none !important;
+}
+.goog-te-gadget {
+    color: transparent !important;
+    font-size: 0 !important;
+}
+.goog-te-banner-frame.skiptranslate {
+    display: none !important;
+}
+body {
+    top: 0 !important;
+}
