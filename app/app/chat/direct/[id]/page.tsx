@@ -3,206 +3,212 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Send, Phone, Video, Plus, Image as ImageIcon, Smile } from 'lucide-react'
+import { ArrowLeft, Send, Bot, Loader2, User, MoreVertical, Phone, Video } from 'lucide-react'
+import { sendUserMessageToBot } from '@/app/portal-gestor-x9z/actions'
 import { motion, AnimatePresence } from 'framer-motion'
-import EmojiPicker, { Theme } from 'emoji-picker-react'
 
 export default function ChatDirectPage() {
-  const { id: targetId } = useParams()
-  const searchParams = useSearchParams()
-  const chatType = searchParams.get('type') || 'user' // 'bot' ou 'user'
-
+  const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
   
+  const botId = params.id as string
   const [messages, setMessages] = useState<any[]>([])
-  const [newMessage, setNewMessage] = useState('')
-  const [targetProfile, setTargetProfile] = useState<any>(null)
-  const [myId, setMyId] = useState<string | null>(null)
-  
-  const [showEmoji, setShowEmoji] = useState(false)
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [botInfo, setBotInfo] = useState<any>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [userId, setUserId] = useState('')
 
+  // 1. Carrega Info Inicial
   useEffect(() => {
-    loadChat()
-    
-    // Configura Realtime dependendo do tipo de chat
-    const tableToListen = chatType === 'bot' ? 'bot_messages' : 'direct_messages'
-    
-    const channel = supabase
-      .channel('chat_room_unified')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: tableToListen }, (payload) => {
-        const newMsg = payload.new
-        
-        let isRelevant = false
-        if (chatType === 'bot') {
-            // Se for bot, a mensagem deve ser entre MIM e o BOT
-            // Atualizado para garantir que mensagens marcadas como is_from_bot (admin) cheguem ao aluno
-            if (newMsg.bot_id === targetId && (newMsg.user_id === myId)) {
-                isRelevant = true
-            }
-        } else {
-            // Chat normal P2P
-            if ((newMsg.sender_id === myId && newMsg.receiver_id === targetId) || (newMsg.sender_id === targetId && newMsg.receiver_id === myId)) {
-                isRelevant = true
-            }
-        }
+    async function load() {
+        const { data: { user } } = await supabase.auth.getUser()
+        if(!user) return router.push('/auth/login')
+        setUserId(user.id)
 
-        if (isRelevant) {
-            setMessages(prev => {
-                if (prev.find(m => m.id === newMsg.id)) return prev
-                return [...prev, newMsg]
-            })
-        }
-      })
-      .subscribe()
+        const { data: bot } = await supabase.from('bot_profiles').select('*').eq('id', botId).single()
+        setBotInfo(bot)
+
+        const { data: msgs } = await supabase
+            .from('bot_messages')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('bot_id', botId)
+            .order('created_at', { ascending: true })
+        
+        setMessages(msgs || [])
+    }
+    load()
+
+    const channel = supabase
+        .channel(`chat:${botId}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bot_messages', filter: `bot_id=eq.${botId}` }, (payload) => {
+            if (payload.new.user_id === userId || payload.new.is_from_bot) {
+                setMessages(prev => {
+                    if (prev.find(m => m.id === payload.new.id)) return prev
+                    return [...prev, payload.new]
+                })
+            }
+        })
+        .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [targetId, chatType, myId])
+  }, [botId, userId])
 
-  async function loadChat() {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    setMyId(user.id)
+  useEffect(() => { scrollToBottom() }, [messages])
 
-    if (chatType === 'bot') {
-        const { data: bot } = await supabase.from('bot_profiles').select('*').eq('id', targetId).single()
-        if (bot) setTargetProfile({ full_name: bot.name, avatar_url: bot.avatar_url })
-
-        const { data: msgs } = await supabase.from('bot_messages')
-            .select('*')
-            .eq('user_id', user.id).eq('bot_id', targetId)
-            .order('created_at', { ascending: true })
-        setMessages(msgs || [])
-    } else {
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', targetId).single()
-        if (profile) setTargetProfile(profile)
-
-        const { data: msgs } = await supabase.from('direct_messages')
-            .select('*')
-            .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-            .order('created_at', { ascending: true })
-        
-        const filtered = (msgs || []).filter(m => 
-            (m.sender_id === user.id && m.receiver_id === targetId) || 
-            (m.sender_id === targetId && m.receiver_id === user.id)
-        )
-        setMessages(filtered)
-    }
+  const scrollToBottom = () => {
+      if(scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      }
   }
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  async function handleSend() {
+      if (!input.trim() || sending) return
+      
+      const content = input.trim()
+      setInput('') 
+      setSending(true)
 
-  const sendMessage = async () => {
-    if (!newMessage.trim() || !myId) return
-    const content = newMessage
-    setNewMessage('')
-    setShowEmoji(false)
+      const optimisticMsg = {
+          id: `temp-${Date.now()}`,
+          content: content,
+          is_from_bot: false,
+          created_at: new Date().toISOString(),
+          user_id: userId
+      }
+      setMessages(prev => [...prev, optimisticMsg])
 
-    // Otimista (Mostra na tela antes de ir pro servidor)
-    const tempMsg = {
-        id: 'temp-' + Date.now(),
-        content: content,
-        created_at: new Date().toISOString(),
-        sender_id: myId, 
-        user_id: myId,   
-        is_from_bot: false
-    }
-    setMessages(prev => [...prev, tempMsg])
-
-    if (chatType === 'bot') {
-        await supabase.from('bot_messages').insert({
-            user_id: myId,
-            bot_id: targetId,
-            content: content,
-            is_from_bot: false
-        })
-    } else {
-        await supabase.from('direct_messages').insert({
-            sender_id: myId,
-            receiver_id: targetId,
-            content: content
-        })
-    }
+      try {
+          await sendUserMessageToBot(botId, content)
+      } catch (error) {
+          console.error("Erro ao enviar:", error)
+      } finally {
+          setSending(false)
+      }
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#09090B] md:items-center md:justify-center md:bg-black/90 md:p-8 notranslate" translate="no">
-      <div className="flex flex-col w-full h-full md:max-w-4xl md:h-[85vh] md:bg-[#0F0F10] md:border md:border-white/10 md:rounded-3xl md:shadow-2xl md:overflow-hidden relative">
+    <div className="flex flex-col h-screen bg-[#09090B] text-white overflow-hidden notranslate" translate="no">
         
-        {/* HEADER */}
-        <header className="flex items-center justify-between px-4 py-3 bg-[#121214] border-b border-white/5 sticky top-0 z-50">
-            <div className="flex items-center gap-3">
-                <button onClick={() => router.push('/app/comunidade')} className="p-2 -ml-2 text-zinc-400 hover:text-white transition rounded-full hover:bg-white/5"><ArrowLeft size={20} /></button>
+        {/* Header Estilizado */}
+        <header className="h-20 border-b border-white/5 flex items-center px-6 gap-4 bg-[#0F0F10]/80 backdrop-blur-xl z-10 shadow-2xl">
+            <button 
+                onClick={() => router.back()} 
+                className="p-2.5 hover:bg-white/5 text-zinc-400 hover:text-white rounded-xl transition-all active:scale-90"
+            >
+                <ArrowLeft size={22}/>
+            </button>
+            
+            <div className="flex items-center gap-4 flex-1">
                 <div className="relative">
-                    <img src={targetProfile?.avatar_url || "https://i.pravatar.cc/150"} className="w-10 h-10 rounded-full object-cover" alt="" />
-                    <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#121214] rounded-full"></div>
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-rose-500 to-rose-700 p-0.5 shadow-lg shadow-rose-500/20">
+                        {botInfo?.avatar_url ? (
+                            <img src={botInfo.avatar_url} className="w-full h-full object-cover rounded-[14px]" alt="avatar" />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-zinc-900 rounded-[14px]"><Bot size={22}/></div>
+                        )}
+                    </div>
+                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-4 border-[#0F0F10] rounded-full shadow-sm"></div>
                 </div>
-                <div>
-                    <h3 className="text-white font-bold text-sm">{targetProfile?.full_name || "Usuário"}</h3>
-                    <span className="text-emerald-500 text-xs font-medium">Online agora</span>
+                
+                <div className="flex flex-col">
+                    <h3 className="font-black text-sm uppercase tracking-tight italic">{botInfo?.name || "Carregando..."}</h3>
+                    <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                        <p className="text-[10px] text-emerald-500 font-black uppercase tracking-widest italic">Ativo Agora</p>
+                    </div>
                 </div>
             </div>
-            <div className="flex gap-2 text-zinc-400">
-                <Video size={20} className="cursor-pointer hover:text-white"/>
-                <Phone size={20} className="cursor-pointer hover:text-white"/>
+
+            <div className="flex items-center gap-1 md:gap-3">
+                <button className="hidden sm:flex p-2 text-zinc-500 hover:text-rose-500 transition-colors"><Video size={20}/></button>
+                <button className="hidden sm:flex p-2 text-zinc-500 hover:text-rose-500 transition-colors"><Phone size={20}/></button>
+                <button className="p-2 text-zinc-500 hover:text-white transition-colors"><MoreVertical size={20}/></button>
             </div>
         </header>
 
-        {/* MENSAGENS */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-black/20 custom-scrollbar">
-            {messages.map((msg) => {
-                // Lógica de Identificação: No chat de bot, o Aluno é o remetente se is_from_bot for falso.
-                // Se is_from_bot for verdadeiro, a mensagem veio do Admin (suporte) e deve aparecer na esquerda.
-                let isMe = false
-                if (chatType === 'bot') isMe = !msg.is_from_bot
-                else isMe = msg.sender_id === myId
-
-                return (
-                    <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${isMe ? 'bg-rose-600 text-white rounded-tr-sm' : 'bg-[#1C1C1E] text-zinc-200 rounded-tl-sm'}`}>
-                            {msg.content}
-                            <div className="text-[9px] mt-1 text-right opacity-70">{new Date(msg.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                        </div>
+        {/* Messages Area */}
+        <div 
+            ref={scrollRef} 
+            className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 custom-scrollbar bg-[url('/chat-bg.png')] bg-repeat bg-fixed"
+            style={{ backgroundImage: 'radial-gradient(circle at center, #121214 0%, #09090B 100%)' }}
+        >
+            {messages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full space-y-4">
+                    <div className="w-20 h-20 bg-zinc-900 rounded-3xl flex items-center justify-center border border-white/5 animate-bounce duration-[2000ms]">
+                        <Bot size={40} className="text-rose-500 opacity-50"/>
                     </div>
-                )
-            })}
-            <div ref={scrollRef} />
-        </div>
-
-        {/* INPUT */}
-        <div className="bg-[#121214] border-t border-white/5 relative z-40 p-3 flex items-end gap-2">
-            <div className="flex-1 bg-[#09090B] rounded-2xl border border-white/10 flex items-center min-h-[50px] px-2 relative">
-                <button onClick={() => setShowEmoji(!showEmoji)} className="p-2 text-zinc-400 hover:text-yellow-500 transition-colors"><Smile size={20} /></button>
-                <input 
-                    value={newMessage} 
-                    onChange={(e) => setNewMessage(e.target.value)} 
-                    onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                    placeholder="Mensagem..." 
-                    className="flex-1 bg-transparent text-white text-sm outline-none py-3 placeholder:text-zinc-600" 
-                />
-            </div>
-            <button onClick={sendMessage} className="p-3.5 bg-rose-600 text-white rounded-full hover:bg-rose-500 shadow-lg active:scale-95 transition-all"><Send size={18} /></button>
-            <AnimatePresence>
-                {showEmoji && (
-                  <motion.div 
-                    initial={{ height: 0, opacity: 0 }} 
-                    animate={{ height: 350, opacity: 1 }} 
-                    exit={{ height: 0, opacity: 0 }} 
-                    className="absolute bottom-full left-0 w-full overflow-hidden bg-[#121214] border-t border-white/5 shadow-2xl"
-                  >
-                    <EmojiPicker 
-                      onEmojiClick={(e) => setNewMessage(p => p + e.emoji)} 
-                      theme={Theme.DARK} 
-                      width="100%" 
-                      height={350} 
-                      lazyLoadEmojis={true}
-                    />
-                  </motion.div>
-                )}
+                    <div className="text-center">
+                        <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Inicie a interação</p>
+                        <p className="text-[10px] text-zinc-700 font-bold uppercase mt-1">Criptografado de ponta a ponta</p>
+                    </div>
+                </div>
+            )}
+            
+            <AnimatePresence initial={false}>
+                {messages.map((msg: any) => {
+                    const isMe = !msg.is_from_bot
+                    return (
+                        <motion.div 
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            key={msg.id} 
+                            className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
+                        >
+                            <div className={`
+                                max-w-[85%] md:max-w-[70%] rounded-[24px] px-5 py-3.5 text-sm shadow-2xl relative
+                                ${isMe 
+                                    ? 'bg-rose-600 text-white rounded-tr-none shadow-rose-900/20' 
+                                    : 'bg-[#18181B] border border-white/5 text-zinc-200 rounded-tl-none'
+                                }
+                            `}>
+                                <p className="leading-relaxed font-medium">{msg.content}</p>
+                                <div className={`flex items-center justify-end gap-1.5 mt-1.5 opacity-40`}>
+                                    <span className="text-[8px] font-black uppercase italic">
+                                        {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                    </span>
+                                    {isMe && <div className="w-2 h-2 rounded-full border border-white/20"></div>}
+                                </div>
+                            </div>
+                        </motion.div>
+                    )
+                })}
             </AnimatePresence>
         </div>
-      </div>
+
+        {/* Input Premium */}
+        <div className="p-4 md:p-8 bg-gradient-to-t from-[#09090B] to-transparent">
+            <div className="max-w-4xl mx-auto flex gap-3 items-end">
+                <div className="flex-1 bg-[#121214] border border-white/10 p-2 pl-6 rounded-[28px] focus-within:border-rose-500/50 transition-all shadow-2xl flex items-center gap-3">
+                    <input 
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                        placeholder="Escreva sua mensagem..."
+                        className="flex-1 bg-transparent outline-none text-sm text-white placeholder:text-zinc-600 py-3 font-medium"
+                        disabled={sending}
+                    />
+                </div>
+                
+                <button 
+                    onClick={handleSend} 
+                    disabled={sending || !input.trim()}
+                    className="bg-rose-600 hover:bg-rose-500 text-white w-14 h-14 rounded-full flex items-center justify-center shadow-xl shadow-rose-900/20 disabled:opacity-20 disabled:grayscale transition-all active:scale-90 shrink-0"
+                >
+                    {sending ? (
+                        <Loader2 size={24} className="animate-spin"/>
+                    ) : (
+                        <Send size={24} className="ml-1" fill="currentColor"/>
+                    )}
+                </button>
+            </div>
+            <p className="text-center text-[8px] text-zinc-700 font-black uppercase tracking-widest mt-4 italic">
+                Respostas geradas por inteligência artificial avançada
+            </p>
+        </div>
     </div>
   )
 }
