@@ -3,15 +3,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { 
   Heart, MessageCircle, Share2, BadgeCheck, 
-  Image as ImageIcon, Video, Users, X, MoreHorizontal, Plus, Send, Loader2,
-  User, Settings, LayoutDashboard, Smile, Play
+  Image as ImageIcon, Video, Users, X, MoreHorizontal, Plus, Loader2,
+  User, Settings, LayoutDashboard, Smile, ChevronLeft, ChevronRight
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
-// Interface para garantir tipagem correta
 interface StoryUser {
     id: string;
     name: string;
@@ -24,23 +23,25 @@ export default function CommunityPage() {
   const [posts, setPosts] = useState<any[]>([])
   const [activeStory, setActiveStory] = useState<any>(null)
   
-  // Lista de Usuários COM Stories (Top Bar)
+  // Listas
   const [usersWithStories, setUsersWithStories] = useState<StoryUser[]>([])
-
-  // Lista de Usuários ONLINE (Sidebar - Bots + Humanos Reais)
   const [onlineUsers, setOnlineUsers] = useState<any[]>([]) 
   
+  // Estados Gerais
   const [likedPosts, setLikedPosts] = useState<string[]>([])
   const [userProfile, setUserProfile] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [issubmitting, setIsSubmitting] = useState(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   
-  // Inputs
+  // Inputs Post
   const [newPostContent, setNewPostContent] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+
+  // Controle de progresso do Story
+  const [progress, setProgress] = useState(0)
 
   const supabase = createClient()
   const router = useRouter()
@@ -53,11 +54,15 @@ export default function CommunityPage() {
     const initData = async () => {
         // 1. Pega usuário atual
         const { data: { user } } = await supabase.auth.getUser()
+        
+        let currentProfile = null;
+
         if (user) {
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
             setUserProfile(profile)
+            currentProfile = profile;
 
-            // 2. Configura PRESENCE (Online Real)
+            // 2. Sistema de PRESENÇA ONLINE
             presenceChannel = supabase.channel('global_presence')
             
             presenceChannel
@@ -65,15 +70,14 @@ export default function CommunityPage() {
                     const state = presenceChannel.presenceState()
                     const onlineHumans: any[] = []
                     
-                    // Converte o estado do presence em lista de usuários
                     for (const id in state) {
-                        const userState = state[id][0] as any
-                        // Não adiciona a si mesmo na lista de "outros online" se não quiser
-                        if (userState && userState.id !== user.id) {
+                        // @ts-ignore
+                        const userState = state[id][0]
+                        if (userState) {
                             onlineHumans.push({
                                 id: userState.id,
                                 name: userState.name,
-                                avatar: userState.avatar,
+                                avatar: userState.avatar, 
                                 is_bot: false
                             })
                         }
@@ -81,28 +85,29 @@ export default function CommunityPage() {
                     updateOnlineList(onlineHumans)
                 })
                 .subscribe(async (status: string) => {
-                    if (status === 'SUBSCRIBED' && profile) {
+                    if (status === 'SUBSCRIBED' && currentProfile) {
                         await presenceChannel.track({
-                            id: profile.id,
-                            name: profile.full_name,
-                            avatar: profile.avatar_url,
+                            id: currentProfile.id,
+                            name: currentProfile.full_name,
+                            avatar: currentProfile.avatar_url, 
                             online_at: new Date().toISOString(),
                         })
                     }
                 })
         }
 
-        // 3. Carrega dados iniciais
+        // 3. Carrega Dados do Banco
         await loadPosts()
         await loadStories()
-        // Carrega bots inicialmente para compor a lista online
-        updateOnlineList([]) 
+        
+        if (!user) updateOnlineList([]) 
+        
         setLoading(false)
     }
 
     initData()
 
-    // 4. Listeners para Atualização em Tempo Real do Banco (Backup do Reload Manual)
+    // 4. Realtime do Banco
     const dbChannel = supabase
       .channel('community_db_sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'social_posts' }, () => loadPosts())
@@ -115,43 +120,109 @@ export default function CommunityPage() {
     }
   }, [])
 
-  // Função auxiliar para misturar Bots (sempre online) com Humanos (online via presence)
+  // --- LÓGICA AUTOMÁTICA DOS STORIES (ATUALIZADO) ---
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (activeStory) {
+        const currentStory = activeStory.stories[activeStory.index];
+        const isVideo = isVideoUrl(currentStory.media_url);
+
+        // Se for imagem, define tempo de 5 segundos
+        if (!isVideo) {
+            setProgress(0);
+            const duration = 5000; // 5 segundos
+            const interval = 50; // atualização da barra
+            let elapsed = 0;
+
+            timer = setInterval(() => {
+                elapsed += interval;
+                setProgress((elapsed / duration) * 100);
+                if (elapsed >= duration) {
+                    handleNextStory();
+                }
+            }, interval);
+        } else {
+            setProgress(0); 
+        }
+    }
+    return () => clearInterval(timer);
+  }, [activeStory]); 
+
+  const handleNextStory = () => {
+      if (!activeStory) return;
+      if (activeStory.index < activeStory.stories.length - 1) {
+          // Próximo segmento do mesmo usuário
+          setActiveStory({ ...activeStory, index: activeStory.index + 1 });
+      } else {
+          // Acabaram os stories desse usuário -> Fecha
+          setActiveStory(null);
+      }
+  };
+
+  const handlePrevStory = () => {
+      if (!activeStory) return;
+      if (activeStory.index > 0) {
+          // Segmento anterior
+          setActiveStory({ ...activeStory, index: activeStory.index - 1 });
+      } else {
+          // Reinicia o primeiro story
+          setActiveStory({ ...activeStory, index: 0 });
+      }
+  };
+
   async function updateOnlineList(realHumans: any[]) {
       const { data: bots } = await supabase.from('bot_profiles').select('id, name, avatar_url').limit(15)
       const formattedBots = (bots || []).map(b => ({ ...b, is_bot: true }))
       
-      // Lista final = Bots + Humanos detectados pelo Presence
-      setOnlineUsers([...formattedBots, ...realHumans])
+      const uniqueHumans = realHumans
+          .filter(h => h.id)
+          .filter((v,i,a)=>a.findIndex(v2=>(v2.id===v.id))===i)
+      
+      setOnlineUsers([...formattedBots, ...uniqueHumans])
   }
 
   async function loadPosts() {
-      const { data: postsData } = await supabase
+      const { data: postsData, error } = await supabase
           .from('social_posts')
           .select(`*, profiles ( full_name, avatar_url, role ), bot_profiles ( name, avatar_url )`)
           .order('created_at', { ascending: false })
-      setPosts(postsData || [])
+      
+      if (!error) {
+          setPosts(postsData || [])
+      } else {
+          console.error("Erro loading posts:", error)
+      }
   }
 
+  // --- CARREGAMENTO DE STORIES (BLINDADO) ---
   async function loadStories() {
-    // Filtra stories das últimas 24 horas (Consultando a tabela corretamente com filtro de tempo)
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-
-    const { data: allStories } = await supabase
+    const { data: allStories, error } = await supabase
       .from('stories')
-      .select(`*, bot_profiles(id, name, avatar_url), profiles(id, full_name, avatar_url)`)
-      .gte('created_at', yesterday) // APENAS STORIES VÁLIDOS
+      .select(`
+        *, 
+        bot_profiles:bot_profiles!fk_stories_bots ( id, name, avatar_url ), 
+        profiles:profiles!fk_stories_profiles ( id, full_name, avatar_url )
+      `)
       .order('created_at', { ascending: false })
     
-    if (!allStories) return;
+    if (error) {
+        console.error("ERRO CRÍTICO STORIES:", JSON.stringify(error, null, 2))
+        return
+    }
 
     const groupedStories = new Map<string, StoryUser>();
 
-    allStories.forEach((story) => {
+    allStories?.forEach((story) => {
         const isBot = !!story.bot_id;
         const id = isBot ? story.bot_id : story.user_id;
-        // Fallback seguro para nome e avatar
-        const name = isBot ? story.bot_profiles?.name : (story.profiles?.full_name || 'Usuário');
-        const avatar = isBot ? story.bot_profiles?.avatar_url : story.profiles?.avatar_url;
+        
+        // @ts-ignore
+        const botData = story.bot_profiles;
+        // @ts-ignore
+        const profileData = story.profiles;
+
+        const name = isBot ? botData?.name : (profileData?.full_name || 'Usuário');
+        const avatar = isBot ? botData?.avatar_url : (profileData?.avatar_url || '');
 
         if (id) {
             if (!groupedStories.has(id)) {
@@ -164,7 +235,7 @@ export default function CommunityPage() {
     setUsersWithStories(Array.from(groupedStories.values()));
   }
 
-  // --- LÓGICA DE UPLOAD E POSTAGEM ---
+  // --- UPLOAD E POSTAGEM ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0]
@@ -204,26 +275,20 @@ export default function CommunityPage() {
         image_url: mediaUrl,
         likes_count: 0
       })
-      
       if (error) throw error
 
-      // ATUALIZAÇÃO IMEDIATA
-      await loadPosts()
-      
-      setNewPostContent('')
-      setSelectedFile(null)
-      setPreviewUrl(null)
-      setMediaType(null)
+      setNewPostContent(''); setSelectedFile(null); setPreviewUrl(null); setMediaType(null)
+      await loadPosts() 
 
     } catch (e) { 
         console.error(e)
-        alert("Erro ao postar. Verifique sua conexão.") 
+        alert("Erro ao postar.") 
     } finally { 
         setIsSubmitting(false) 
     }
   }
 
-  // --- POSTAR STORY (ATUALIZAÇÃO IMEDIATA) ---
+  // --- POSTAR STORY ---
   async function handlePostStory(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || !e.target.files[0]) return
     const file = e.target.files[0]
@@ -231,8 +296,8 @@ export default function CommunityPage() {
     
     try {
       const fileExt = file.name.split('.').pop()
-      const fileName = `story-${Date.now()}.${fileExt}`
-      const { data: uploadData, error: uploadError } = await supabase.storage.from('community-media').upload(fileName, file)
+      const fileName = `story-${Date.now()}.${file.name.split('.').pop()}`
+      const { error: uploadError } = await supabase.storage.from('community-media').upload(fileName, file)
       if (uploadError) throw uploadError
 
       const { data: urlData } = supabase.storage.from('community-media').getPublicUrl(fileName)
@@ -244,7 +309,6 @@ export default function CommunityPage() {
 
       if (insertError) throw insertError
 
-      // ATUALIZAÇÃO IMEDIATA: Garante que aparece na barra na hora
       await loadStories() 
       
     } catch (e) { 
@@ -275,8 +339,22 @@ export default function CommunityPage() {
   }
 
   const SafeAvatar = ({ src, className }: any) => {
-      const isValid = src && (src.startsWith('http') || src.startsWith('/'))
-      return isValid ? <img src={src} className={className} alt="" /> : <div className={`${className} flex items-center justify-center bg-zinc-800 text-zinc-500`}><Users size={14} /></div>
+      const isValid = src && src.length > 5;
+      return isValid ? (
+        <img 
+            src={src} 
+            className={className} 
+            alt="" 
+            onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                e.currentTarget.parentElement?.classList.add('bg-zinc-800');
+            }} 
+        />
+      ) : (
+        <div className={`${className} flex items-center justify-center bg-zinc-800 text-zinc-500`}>
+            <Users size={14} />
+        </div>
+      )
   }
 
   const myUserStory = usersWithStories.find(u => u.id === userProfile?.id)
@@ -322,7 +400,6 @@ export default function CommunityPage() {
                 <nav className="flex-1 space-y-4">
                     <Link href="/app/profile" className="flex items-center gap-3 text-zinc-300 font-medium"><User size={20}/> Perfil</Link>
                     <Link href="/app/dashboard" className="flex items-center gap-3 text-zinc-300 font-medium"><LayoutDashboard size={20}/> Dashboard</Link>
-                    <Link href="/app/settings" className="flex items-center gap-3 text-zinc-300 font-medium"><Settings size={20}/> Configurações</Link>
                 </nav>
             </motion.aside>
           </>
@@ -359,11 +436,11 @@ export default function CommunityPage() {
         {/* FEED CENTRAL */}
         <main className="col-span-1 md:col-span-2 space-y-6">
             
-            {/* 1. CARROSSEL DE STORIES (CONSULTANDO TABELA CORRETA + FILTRO TEMPO) */}
+            {/* 1. CARROSSEL DE STORIES */}
             <div className="bg-[#0F0F10] md:bg-transparent md:border-none border-b border-white/10 pb-4 pt-2 md:pt-0">
                  <div className="overflow-x-auto custom-scrollbar flex gap-4 px-4 md:px-0">
                     
-                    {/* MEU STORY (Fixo no início) */}
+                    {/* MEU STORY */}
                     <div className="flex flex-col items-center gap-1 min-w-[70px] group relative">
                         <div className="relative w-[68px] h-[68px]">
                              <div 
@@ -408,7 +485,7 @@ export default function CommunityPage() {
                 <div className="flex gap-4">
                     <SafeAvatar src={userProfile?.avatar_url} className="w-10 h-10 rounded-full object-cover" />
                     <div className="flex-1">
-                        <textarea value={newPostContent} onChange={(e) => setNewPostContent(e.target.value)} className="w-full bg-transparent text-zinc-200 placeholder:text-zinc-600 text-sm resize-none focus:outline-none min-h-[60px]" placeholder={`No que você está pensando, ${userProfile?.full_name?.split(' ')[0]}?`} />
+                        <textarea value={newPostContent} onChange={(e) => setNewPostContent(e.target.value)} className="w-full bg-transparent text-zinc-200 placeholder:text-zinc-600 text-sm resize-none focus:outline-none min-h-[60px]" placeholder={`No que você está pensando?`} />
                         {previewUrl && (
                           <div className="relative mt-3 rounded-xl overflow-hidden bg-black border border-white/10 max-h-[300px]">
                              <button onClick={() => { setSelectedFile(null); setPreviewUrl(null); setMediaType(null) }} className="absolute top-2 right-2 bg-black/60 p-1.5 rounded-full z-10 text-white hover:bg-rose-600 transition"><X size={16}/></button>
@@ -440,7 +517,7 @@ export default function CommunityPage() {
                                 </div>
                                 <div className="leading-tight">
                                     <p className="font-bold text-white text-sm hover:underline">{post.bot_profiles?.name || post.profiles?.full_name}</p>
-                                    <p className="text-[11px] text-zinc-500">{new Date(post.created_at).toLocaleDateString()} • {new Date(post.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                    <p className="text-[11px] text-zinc-500">{new Date(post.created_at).toLocaleDateString()}</p>
                                 </div>
                             </div>
                             <button className="text-zinc-500 hover:text-white"><MoreHorizontal size={20}/></button>
@@ -472,6 +549,7 @@ export default function CommunityPage() {
                         <div key={u.id} className="flex items-center justify-between p-2 rounded-xl hover:bg-white/5 cursor-pointer group transition" onClick={() => handleStartChat(u.id, u.is_bot)}>
                             <div className="flex items-center gap-3">
                                 <div className="relative">
+                                    {/* Mostra avatar e lida com erro se URL for ruim */}
                                     <SafeAvatar src={u.avatar} className="w-10 h-10 rounded-full object-cover" />
                                     <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#121214] rounded-full animate-pulse"></div>
                                 </div>
@@ -496,30 +574,66 @@ export default function CommunityPage() {
 
       </div>
       
-      {/* VISUALIZADOR DE STORIES */}
+      {/* VISUALIZADOR DE STORIES (FULLSCREEN REAL - Z-INDEX 9999) */}
       <AnimatePresence>
         {activeStory && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black flex flex-col">
-            <div className="absolute top-0 left-0 right-0 z-20 p-4 pt-8 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <SafeAvatar src={activeStory.user.avatar || activeStory.stories[activeStory.index].bot_profiles?.avatar_url} className="w-10 h-10 rounded-full border border-white/20" />
-                    <div><p className="text-white font-bold text-sm shadow-sm">{activeStory.user.name}</p><p className="text-white/60 text-xs">Story Recente</p></div>
-                </div>
-                <button onClick={() => setActiveStory(null)} className="p-2 bg-white/10 rounded-full backdrop-blur-md text-white hover:bg-white/20"><X size={24}/></button>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[9999] bg-black flex flex-col h-screen w-screen overflow-hidden">
+            
+            {/* Áreas de Toque Invisíveis para Navegação */}
+            <div className="absolute inset-0 z-40 flex">
+                <div className="w-[30%] h-full" onClick={(e) => { e.stopPropagation(); handlePrevStory(); }}></div>
+                <div className="w-[70%] h-full" onClick={(e) => { e.stopPropagation(); handleNextStory(); }}></div>
             </div>
-            <div className="flex-1 relative flex items-center justify-center bg-zinc-900">
-                <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="relative w-full h-full max-w-lg md:aspect-[9/16] md:h-auto md:rounded-2xl overflow-hidden flex items-center bg-black">
-                    {isVideoUrl(activeStory.stories[activeStory.index].media_url) ? 
-                         <video src={activeStory.stories[activeStory.index].media_url} autoPlay className="w-full h-full object-contain" onEnded={() => setActiveStory(null)}/> : 
-                         <img src={activeStory.stories[activeStory.index].media_url} className="w-full h-full object-contain" alt="" />
-                    }
-                    <div className="absolute top-2 left-2 right-2 flex gap-1 z-30">
-                        {activeStory.stories.map((_:any, i:number) => (
-                            <div key={i} className="h-0.5 flex-1 bg-white/30 rounded-full overflow-hidden">
-                                <motion.div initial={{ width: 0 }} animate={{ width: i === activeStory.index ? '100%' : (i < activeStory.index ? '100%' : '0%') }} transition={{ duration: 5, ease: 'linear' }} className="h-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)]"/>
-                            </div>
-                        ))}
+
+            {/* Header: Barras de Progresso + Botão Fechar */}
+            <div className="absolute top-0 left-0 right-0 z-50 p-4 pt-6 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
+                {/* Barras de Progresso */}
+                <div className="flex gap-1 mb-4 pointer-events-auto">
+                    {activeStory.stories.map((_:any, i:number) => (
+                        <div key={i} className="h-0.5 flex-1 bg-white/30 rounded-full overflow-hidden">
+                            <motion.div 
+                                initial={{ width: i < activeStory.index ? '100%' : '0%' }} 
+                                animate={{ width: i === activeStory.index ? `${progress}%` : (i < activeStory.index ? '100%' : '0%') }} 
+                                transition={{ duration: i === activeStory.index ? 0 : 0.3 }} 
+                                className="h-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)]"
+                            />
+                        </div>
+                    ))}
+                </div>
+
+                <div className="flex items-center justify-between pointer-events-auto">
+                    <div className="flex items-center gap-3">
+                        <SafeAvatar src={activeStory.user.avatar || activeStory.stories[activeStory.index].bot_profiles?.avatar_url} className="w-10 h-10 rounded-full border border-white/20 shadow-lg" />
+                        <div><p className="text-white font-bold text-sm shadow-black drop-shadow-md">{activeStory.user.name}</p></div>
                     </div>
+                    <button onClick={(e) => { e.stopPropagation(); setActiveStory(null); }} className="p-2 bg-white/10 rounded-full backdrop-blur-md text-white hover:bg-white/20 active:scale-95 transition">
+                        <X size={24}/>
+                    </button>
+                </div>
+            </div>
+
+            {/* Conteúdo Central (Imagem/Video) */}
+            <div className="flex-1 relative flex items-center justify-center bg-black">
+                <motion.div 
+                    key={activeStory.stories[activeStory.index].id}
+                    initial={{ opacity: 0.8, scale: 0.98 }} 
+                    animate={{ opacity: 1, scale: 1 }} 
+                    className="relative w-full h-full flex items-center justify-center"
+                >
+                    {isVideoUrl(activeStory.stories[activeStory.index].media_url) ? 
+                         <video 
+                            src={activeStory.stories[activeStory.index].media_url} 
+                            autoPlay 
+                            playsInline
+                            className="w-full h-full object-contain" 
+                            onEnded={handleNextStory} 
+                         /> : 
+                         <img 
+                            src={activeStory.stories[activeStory.index].media_url} 
+                            className="w-full h-full object-contain" 
+                            alt="" 
+                         />
+                    }
                 </motion.div>
             </div>
           </motion.div>
