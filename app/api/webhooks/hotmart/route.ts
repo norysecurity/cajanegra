@@ -9,13 +9,14 @@ const supabaseAdmin = createClient(
 
 export async function POST(request: Request) {
   try {
-    // === BLINDAGEM DE SEGURANÇA (NOVO) ===
-    // 1. Pega o token que veio no cabeçalho da requisição
-    const signature = request.headers.get('x-hotmart-hottok')
-    const secret = process.env.HOTMART_SECRET_TOKEN
+    // === BLINDAGEM DE SEGURANÇA (ATUALIZADO) ===
+    // 1. Pega o token: Aceita o header antigo (hottok) OU o novo (hws-signature/simulador)
+    const signature = request.headers.get('x-hotmart-hottok') || request.headers.get('x-hotmart-hws-signature')
+    
+    // 2. Pega o segredo: Tenta ler as duas variáveis possíveis do .env para garantir
+    const secret = process.env.HOTMART_SECRET_TOKEN || process.env.HOTMART_WEBHOOK_SECRET
 
-    // 2. Se não tiver token ou for diferente do seu .env, BLOQUEIA.
-    // Isso impede que hackers simulem compras falsas.
+    // 3. Validação
     if (!secret || signature !== secret) {
       console.error('[SEGURANÇA] Tentativa de acesso não autorizado no Webhook.')
       return NextResponse.json({ error: 'Acesso Negado: Token Inválido' }, { status: 401 })
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
 
     if (existingUser) {
       userId = existingUser.id
+      console.log(`[USUÁRIO EXISTENTE] ID: ${userId}`)
     } else {
       console.log(`[NOVO USUÁRIO] Criando: ${email}`)
       // Senha temporária forte
@@ -86,7 +88,8 @@ export async function POST(request: Request) {
       await supabaseAdmin.from('profiles').upsert({
         id: userId,
         email: email,
-        full_name: name
+        full_name: name,
+        updated_at: new Date().toISOString()
       })
     }
 
@@ -99,9 +102,11 @@ export async function POST(request: Request) {
         status: 'active',
         transaction_id: transaction,
         created_at: new Date().toISOString()
-      }, { onConflict: 'transaction_id' })
+      }, { onConflict: 'user_id,product_id' }) // Ajuste para evitar erro se tentar liberar o mesmo produto 2x
 
     if (purchaseError) throw purchaseError
+
+    console.log(`[SUCESSO] Acesso liberado para ${email} no produto ${product.title}`)
 
     return NextResponse.json({ message: 'Acesso Liberado e Seguro' })
 

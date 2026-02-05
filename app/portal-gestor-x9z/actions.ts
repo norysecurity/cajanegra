@@ -415,7 +415,7 @@ export async function checkLessonAccess(lessonId: string) {
   return purchase ? { allowed: true } : { allowed: false }
 }
 
-// 2. Verifica se o aluno comprou a I.A.
+// 2. Verifica se o aluno comprou a I.A. (ATUALIZADA)
 export async function checkAIAccess() {
   const supabase = await createClient()
   const { data: config } = await supabase.from('site_config').select('value').eq('key', 'ai_config').maybeSingle()
@@ -426,9 +426,41 @@ export async function checkAIAccess() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { allowed: false }
   
+  // Tenta encontrar uma compra vinculada ao ID do produto configurado
   const { data: purchase } = await supabase.from('purchases').select('id').eq('user_id', user.id).eq('product_id', parsed?.aiProductId).eq('status', 'active').maybeSingle()
     
   return purchase ? { allowed: true } : { allowed: false }
+}
+
+// 3. Verifica acesso genérico por Produto (NOVA - Para Rede Social)
+export async function checkProductAccess(productIdOrHotmartId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) return { allowed: false }
+
+  // 1. Tenta achar o produto pelo ID interno ou pelo ID da Hotmart
+  const { data: product } = await supabase
+    .from('products')
+    .select('id, is_locked_by_default')
+    .or(`id.eq.${productIdOrHotmartId},hotmart_id.eq.${productIdOrHotmartId}`)
+    .single()
+
+  if (!product) return { allowed: false }
+
+  // Se o produto não é bloqueado por padrão, libera
+  if (!product.is_locked_by_default) return { allowed: true }
+
+  // 2. Verifica se existe compra ativa para esse produto e usuário
+  const { data: purchase } = await supabase
+    .from('purchases')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('product_id', product.id)
+    .eq('status', 'active')
+    .maybeSingle()
+
+  return { allowed: !!purchase }
 }
 
 export async function getAISettings() {
