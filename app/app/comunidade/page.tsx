@@ -71,7 +71,9 @@ export default function CommunityPage() {
 
     const initData = async () => {
         const { data: { user } } = await supabase.auth.getUser()
-        let currentProfile = null;
+        
+        // CORREÇÃO AQUI: Adicionado ': any' para o TypeScript não reclamar
+        let currentProfile: any = null;
 
         if (user) {
             const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
@@ -124,6 +126,7 @@ export default function CommunityPage() {
       .channel('community_db_sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'social_posts' }, () => loadPosts())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stories' }, () => loadStories())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'social_comments' }, () => loadPosts())
       .subscribe()
 
     return () => { 
@@ -186,19 +189,35 @@ export default function CommunityPage() {
       setOnlineUsers([...formattedBots, ...uniqueHumans])
   }
 
-  // --- CARREGAMENTO DE POSTS (ROLLBACK PARA VERSÃO SEGURA) ---
+  // --- CARREGAMENTO DE POSTS ---
   async function loadPosts() {
-      // Removemos a chamada para 'social_comments' que estava quebrando o feed
+      // Usa a relação explicita !fk_comments_posts e !fk_comments_profiles para evitar erros
       const { data: postsData, error } = await supabase
           .from('social_posts')
           .select(`
             *, 
             profiles ( full_name, avatar_url, role ), 
-            bot_profiles ( name, avatar_url )
+            bot_profiles ( name, avatar_url ),
+            social_comments:social_comments!fk_comments_posts (
+                id,
+                content,
+                created_at,
+                profiles:profiles!fk_comments_profiles ( full_name, avatar_url )
+            )
           `)
           .order('created_at', { ascending: false })
       
-      if (!error) setPosts(postsData || [])
+      if (!error) {
+          setPosts(postsData || [])
+      } else {
+          // Se der erro, tenta carregar SEM comentários para não quebrar o feed
+          console.error("Erro carregando comentários, tentando carregar apenas posts...", error)
+          const { data: fallbackPosts } = await supabase
+            .from('social_posts')
+            .select(`*, profiles ( full_name, avatar_url, role ), bot_profiles ( name, avatar_url )`)
+            .order('created_at', { ascending: false })
+          setPosts(fallbackPosts || [])
+      }
   }
 
   async function loadStories() {
@@ -296,25 +315,25 @@ export default function CommunityPage() {
       setActiveCommentPostId(activeCommentPostId === postId ? null : postId)
   }
 
-  // --- ENVIAR COMENTÁRIO (TENTA SALVAR, MAS NÃO TRAVA O FEED) ---
+  // --- ENVIAR COMENTÁRIO ---
   const submitComment = async (postId: string) => {
       if(!commentText.trim()) return
       setSendingComment(true)
 
       try {
-          // Tenta inserir. Se a tabela não existir, vai cair no catch, mas não quebra o site.
-          await supabase.from('social_comments').insert({
+          const { error } = await supabase.from('social_comments').insert({
               post_id: postId,
               user_id: userProfile.id,
               content: commentText
           })
 
-          alert("Comentário enviado!")
+          if (error) throw error
+
           setCommentText("")
-          setActiveCommentPostId(null)
+          await loadPosts() // Recarrega para mostrar o comentário
       } catch (e) {
           console.error(e)
-          alert("Ainda não é possível salvar comentários (Tabela ausente).")
+          alert("Erro ao enviar comentário.")
       } finally {
           setSendingComment(false)
       }
@@ -494,15 +513,15 @@ export default function CommunityPage() {
                             
                             {/* ÁREA DE COMENTÁRIOS */}
                             <div className="mt-4 space-y-3">
-                                {/* Lista de Comentários (SE EXISTIREM NA QUERY) */}
+                                {/* LISTA DE COMENTÁRIOS */}
                                 {post.social_comments && post.social_comments.length > 0 && (
-                                    <div className="space-y-2 mb-3 max-h-40 overflow-y-auto custom-scrollbar">
+                                    <div className="space-y-3 mb-4 max-h-48 overflow-y-auto custom-scrollbar">
                                         {post.social_comments.map((comment: any) => (
                                             <div key={comment.id} className="flex gap-2">
-                                                <SafeAvatar src={comment.profiles?.avatar_url} className="w-6 h-6 rounded-full object-cover" />
-                                                <div className="bg-zinc-800/50 rounded-xl px-3 py-1.5">
-                                                    <p className="text-xs font-bold text-zinc-400">{comment.profiles?.full_name}</p>
-                                                    <p className="text-sm text-zinc-200">{comment.content}</p>
+                                                <SafeAvatar src={comment.profiles?.avatar_url} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                                                <div className="bg-zinc-800/60 rounded-xl px-3 py-2 w-full">
+                                                    <p className="text-xs font-bold text-zinc-300 mb-0.5">{comment.profiles?.full_name || 'Usuário'}</p>
+                                                    <p className="text-xs text-zinc-200 leading-relaxed">{comment.content}</p>
                                                 </div>
                                             </div>
                                         ))}
@@ -517,7 +536,7 @@ export default function CommunityPage() {
                                                 type="text" 
                                                 value={commentText}
                                                 onChange={(e) => setCommentText(e.target.value)}
-                                                placeholder="Adicione um comentário..."
+                                                placeholder="Escreva um comentário..."
                                                 className="flex-1 bg-zinc-900 border border-white/10 rounded-full px-4 py-2 text-sm text-white focus:outline-none focus:border-rose-500"
                                             />
                                             <button onClick={() => submitComment(post.id)} disabled={sendingComment} className="p-2 bg-rose-600 rounded-full text-white hover:bg-rose-700 disabled:opacity-50">
