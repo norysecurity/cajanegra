@@ -4,13 +4,15 @@ import { useState, useEffect, useRef } from 'react'
 import { 
   Heart, MessageCircle, Share2, BadgeCheck, 
   Image as ImageIcon, Video, Users, X, MoreHorizontal, Plus, Loader2,
-  User, Settings, LayoutDashboard, Smile, ChevronLeft, ChevronRight, Send
+  User, Settings, LayoutDashboard, Smile, ChevronLeft, ChevronRight, Send, Trash2
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useUI } from '@/components/providers/GlobalUIProvider' 
 
+// --- AQUI ESTÁ A INTERFACE QUE FALTAVA ---
 interface StoryUser {
     id: string;
     name: string;
@@ -53,7 +55,10 @@ export default function CommunityPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const storyInputRef = useRef<HTMLInputElement>(null)
 
-  // 1. CARREGAR LIKES
+  // Hook Global de UI
+  const { showToast, confirm } = useUI()
+
+  // 1. CARREGAR LIKES LOCAIS
   useEffect(() => {
     const savedLikes = localStorage.getItem('user_liked_posts')
     if (savedLikes) {
@@ -61,18 +66,18 @@ export default function CommunityPage() {
     }
   }, [])
 
-  // 2. SALVAR LIKES
+  // 2. SALVAR LIKES LOCAIS
   useEffect(() => {
     localStorage.setItem('user_liked_posts', JSON.stringify(likedPosts))
   }, [likedPosts])
 
+  // --- EFEITO PRINCIPAL DE CARREGAMENTO E REALTIME ---
   useEffect(() => {
     let presenceChannel: any;
 
     const initData = async () => {
         const { data: { user } } = await supabase.auth.getUser()
         
-        // CORREÇÃO AQUI: Adicionado ': any' para o TypeScript não reclamar
         let currentProfile: any = null;
 
         if (user) {
@@ -80,7 +85,7 @@ export default function CommunityPage() {
             setUserProfile(profile)
             currentProfile = profile;
 
-            // 2. Sistema de PRESENÇA ONLINE
+            // Sistema de PRESENÇA
             presenceChannel = supabase.channel('global_presence')
             
             presenceChannel
@@ -122,9 +127,13 @@ export default function CommunityPage() {
 
     initData()
 
+    // REALTIME AUTOMÁTICO
     const dbChannel = supabase
-      .channel('community_db_sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'social_posts' }, () => loadPosts())
+      .channel('community_db_sync_multiuser')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'social_posts' }, (payload) => {
+          console.log("Mudança no Feed detectada:", payload)
+          loadPosts()
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stories' }, () => loadStories())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'social_comments' }, () => loadPosts())
       .subscribe()
@@ -191,7 +200,6 @@ export default function CommunityPage() {
 
   // --- CARREGAMENTO DE POSTS ---
   async function loadPosts() {
-      // Usa a relação explicita !fk_comments_posts e !fk_comments_profiles para evitar erros
       const { data: postsData, error } = await supabase
           .from('social_posts')
           .select(`
@@ -210,8 +218,6 @@ export default function CommunityPage() {
       if (!error) {
           setPosts(postsData || [])
       } else {
-          // Se der erro, tenta carregar SEM comentários para não quebrar o feed
-          console.error("Erro carregando comentários, tentando carregar apenas posts...", error)
           const { data: fallbackPosts } = await supabase
             .from('social_posts')
             .select(`*, profiles ( full_name, avatar_url, role ), bot_profiles ( name, avatar_url )`)
@@ -220,7 +226,10 @@ export default function CommunityPage() {
       }
   }
 
+  // --- CARREGAMENTO DE STORIES (FILTRO 24H) ---
   async function loadStories() {
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
     const { data: allStories, error } = await supabase
       .from('stories')
       .select(`
@@ -228,6 +237,7 @@ export default function CommunityPage() {
         bot_profiles:bot_profiles!fk_stories_bots ( id, name, avatar_url ), 
         profiles:profiles!fk_stories_profiles ( id, full_name, avatar_url )
       `)
+      .gte('created_at', twentyFourHoursAgo)
       .order('created_at', { ascending: false })
     
     if (error) return
@@ -269,6 +279,7 @@ export default function CommunityPage() {
     }
   }
 
+  // --- CRIAR POST ---
   async function handleCreatePost() {
     if (!newPostContent.trim() && !selectedFile) return
     setIsSubmitting(true)
@@ -279,17 +290,55 @@ export default function CommunityPage() {
         const { data } = await supabase.storage.from('community-media').upload(fileName, selectedFile)
         if (data) mediaUrl = supabase.storage.from('community-media').getPublicUrl(fileName).data.publicUrl
       }
-      await supabase.from('social_posts').insert({
+      
+      const { error } = await supabase.from('social_posts').insert({
         user_id: userProfile.id,
         content: newPostContent,
         image_url: mediaUrl,
         likes_count: 0
       })
-      setNewPostContent(''); setSelectedFile(null); setPreviewUrl(null); setMediaType(null)
+
+      if (error) throw error
+
+      setNewPostContent('')
+      setSelectedFile(null)
+      setPreviewUrl(null)
+      setMediaType(null)
+      
       await loadPosts() 
-    } catch (e) { alert("Erro ao postar.") } finally { setIsSubmitting(false) }
+      showToast('Post publicado com sucesso!', 'success')
+
+    } catch (e) { 
+        showToast('Erro ao postar.', 'error')
+    } finally { 
+        setIsSubmitting(false) 
+    }
   }
 
+  // --- APAGAR POST ---
+  async function handleDeletePost(postId: string) {
+    confirm({
+        title: 'Excluir Publicação?',
+        description: 'Essa ação não pode ser desfeita. O post sumirá do feed para todos.',
+        confirmText: 'Sim, excluir',
+        cancelText: 'Cancelar',
+        variant: 'danger',
+        onConfirm: async () => {
+            try {
+                const { error } = await supabase.from('social_posts').delete().eq('id', postId).eq('user_id', userProfile.id)
+                if (error) throw error
+                
+                setPosts(prevPosts => prevPosts.filter(post => post.id !== postId))
+                showToast('Post excluído.', 'success')
+            } catch (e) {
+                console.error(e)
+                showToast('Não foi possível excluir.', 'error')
+            }
+        }
+    })
+  }
+
+  // --- CRIAR STORY ---
   async function handlePostStory(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || !e.target.files[0]) return
     const file = e.target.files[0]
@@ -298,16 +347,34 @@ export default function CommunityPage() {
       const fileName = `story-${Date.now()}.${file.name.split('.').pop()}`
       await supabase.storage.from('community-media').upload(fileName, file)
       const mediaUrl = supabase.storage.from('community-media').getPublicUrl(fileName).data.publicUrl
-      await supabase.from('stories').insert({ user_id: userProfile.id, media_url: mediaUrl })
+      
+      const { error } = await supabase.from('stories').insert({ 
+          user_id: userProfile.id, 
+          media_url: mediaUrl 
+      })
+
+      if (error) throw error
       await loadStories() 
-    } catch (e) { alert("Erro ao postar story.") } finally { setIsSubmitting(false); if(storyInputRef.current) storyInputRef.current.value = '' }
+      showToast('Story adicionado!', 'success')
+
+    } catch (e) { showToast('Erro ao postar story.', 'error') } finally { setIsSubmitting(false); if(storyInputRef.current) storyInputRef.current.value = '' }
   }
 
   const handleLike = async (postId: string) => {
     const isLiking = !likedPosts.includes(postId)
     setLikedPosts(prev => isLiking ? [...prev, postId] : prev.filter(id => id !== postId))
+    
+    setPosts(prev => prev.map(p => {
+        if(p.id === postId) {
+            const current = p.likes_count || 0
+            return { ...p, likes_count: isLiking ? current + 1 : Math.max(0, current - 1) }
+        }
+        return p
+    }))
+
     const currentPost = posts.find(p => p.id === postId)
     const newLikes = isLiking ? (currentPost.likes_count || 0) + 1 : Math.max(0, (currentPost.likes_count || 0) - 1)
+    
     await supabase.from('social_posts').update({ likes_count: newLikes }).eq('id', postId)
   }
 
@@ -315,7 +382,6 @@ export default function CommunityPage() {
       setActiveCommentPostId(activeCommentPostId === postId ? null : postId)
   }
 
-  // --- ENVIAR COMENTÁRIO ---
   const submitComment = async (postId: string) => {
       if(!commentText.trim()) return
       setSendingComment(true)
@@ -330,10 +396,10 @@ export default function CommunityPage() {
           if (error) throw error
 
           setCommentText("")
-          await loadPosts() // Recarrega para mostrar o comentário
+          await loadPosts()
       } catch (e) {
           console.error(e)
-          alert("Erro ao enviar comentário.")
+          showToast('Erro ao enviar comentário.', 'error')
       } finally {
           setSendingComment(false)
       }
@@ -360,7 +426,7 @@ export default function CommunityPage() {
   if (loading) return <div className="min-h-screen bg-[#000000] flex items-center justify-center text-rose-600 font-black italic animate-pulse tracking-tighter">CARREGANDO...</div>
 
   return (
-    <div className="min-h-screen bg-[#000000] text-zinc-100 notranslate pb-20 overflow-x-hidden font-sans" translate="no">
+    <div className="min-h-screen bg-[#000000] text-zinc-100 pb-20 overflow-x-hidden font-sans">
       
       {/* MOBILE HEADER */}
       <div className="md:hidden sticky top-0 z-50 bg-black/90 backdrop-blur-md border-b border-white/10 px-4 py-3 flex justify-between items-center">
@@ -453,12 +519,12 @@ export default function CommunityPage() {
                     {usersWithStories.map((u) => {
                          if (u.id === userProfile?.id) return null; 
                          return (
-                            <div key={u.id} onClick={() => setActiveStory({ user: u, stories: u.stories, index: 0 })} className="flex flex-col items-center gap-1 min-w-[70px] cursor-pointer group">
-                                <div className="w-[68px] h-[68px] rounded-full p-[2px] bg-gradient-to-tr from-yellow-500 via-rose-500 to-purple-600 transform transition group-hover:scale-105">
-                                    <div className="w-full h-full rounded-full border-2 border-black bg-black p-0.5"><SafeAvatar src={u.avatar} className="w-full h-full rounded-full object-cover" /></div>
-                                </div>
-                                <span className="text-xs text-zinc-300 w-16 truncate text-center">{u.name?.split(' ')[0]}</span>
-                            </div>
+                           <div key={u.id} onClick={() => setActiveStory({ user: u, stories: u.stories, index: 0 })} className="flex flex-col items-center gap-1 min-w-[70px] cursor-pointer group">
+                               <div className="w-[68px] h-[68px] rounded-full p-[2px] bg-gradient-to-tr from-yellow-500 via-rose-500 to-purple-600 transform transition group-hover:scale-105">
+                                   <div className="w-full h-full rounded-full border-2 border-black bg-black p-0.5"><SafeAvatar src={u.avatar} className="w-full h-full rounded-full object-cover" /></div>
+                               </div>
+                               <span className="text-xs text-zinc-300 w-16 truncate text-center">{u.name?.split(' ')[0]}</span>
+                           </div>
                          )
                     })}
                  </div>
@@ -497,7 +563,19 @@ export default function CommunityPage() {
                                 <SafeAvatar src={post.bot_profiles?.avatar_url || post.profiles?.avatar_url} className="w-10 h-10 rounded-full object-cover" />
                                 <div><p className="font-bold text-white text-sm">{post.bot_profiles?.name || post.profiles?.full_name}</p><p className="text-[11px] text-zinc-500">{new Date(post.created_at).toLocaleDateString()}</p></div>
                             </div>
+                            
+                            {/* --- BOTÃO DE APAGAR POST (APARECE SÓ SE FOR O DONO) --- */}
+                            {post.user_id === userProfile?.id && (
+                                <button 
+                                    onClick={() => handleDeletePost(post.id)}
+                                    className="p-2 text-zinc-500 hover:text-red-500 hover:bg-red-500/10 rounded-full transition-colors"
+                                    title="Apagar post"
+                                >
+                                    <Trash2 size={18} />
+                                </button>
+                            )}
                         </div>
+                        
                         {post.content && <div className="px-4 pb-3 text-zinc-200 text-sm whitespace-pre-wrap">{post.content}</div>}
                         {post.image_url && <div className="w-full bg-black flex justify-center max-h-[600px] overflow-hidden">{isVideoUrl(post.image_url) ? <video src={post.image_url} controls className="w-full max-h-[600px] object-contain" /> : <img src={post.image_url} className="w-full max-h-[600px] object-cover" />}</div>}
                         
@@ -513,7 +591,6 @@ export default function CommunityPage() {
                             
                             {/* ÁREA DE COMENTÁRIOS */}
                             <div className="mt-4 space-y-3">
-                                {/* LISTA DE COMENTÁRIOS */}
                                 {post.social_comments && post.social_comments.length > 0 && (
                                     <div className="space-y-3 mb-4 max-h-48 overflow-y-auto custom-scrollbar">
                                         {post.social_comments.map((comment: any) => (

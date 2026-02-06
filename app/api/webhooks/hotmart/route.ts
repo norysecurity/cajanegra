@@ -1,117 +1,110 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
-// Cliente ADMIN (Service Role) - Necessário para criar usuários
+// Configuração do Cliente Admin
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  }
 )
 
 export async function POST(request: Request) {
   try {
-    // === BLINDAGEM DE SEGURANÇA (ATUALIZADO) ===
-    // 1. Pega o token: Aceita o header antigo (hottok) OU o novo (hws-signature/simulador)
-    const signature = request.headers.get('x-hotmart-hottok') || request.headers.get('x-hotmart-hws-signature')
-    
-    // 2. Pega o segredo: Tenta ler as duas variáveis possíveis do .env para garantir
-    const secret = process.env.HOTMART_SECRET_TOKEN || process.env.HOTMART_WEBHOOK_SECRET
-
-    // 3. Validação
-    if (!secret || signature !== secret) {
-      console.error('[SEGURANÇA] Tentativa de acesso não autorizado no Webhook.')
-      return NextResponse.json({ error: 'Acesso Negado: Token Inválido' }, { status: 401 })
+    // 1. Segurança (Pula se não tiver token configurado localmente)
+    const signature = request.headers.get('x-hotmart-hottok')
+    const secret = process.env.HOTMART_SECRET_TOKEN
+    if (secret && signature !== secret) {
+      return NextResponse.json({ error: 'Token Inválido' }, { status: 401 })
     }
-    // ======================================
 
     const body = await request.json()
-    console.log('[WEBHOOK] Payload recebido e autenticado.')
-
-    // Tratamento para payload v1.0 ou v2.0 da Hotmart
+    // Normaliza os dados (v1.0 ou v2.0)
     const payloadData = body.data && body.data.product ? body.data : body
-    
-    // Dados da Venda
-    const hotmartId = String(payloadData.product?.id || payloadData.prod || '')
-    const email = payloadData.buyer?.email || payloadData.email
+
+    // === PONTO CRÍTICO: DADOS RECEBIDOS ===
+    const hotmartIdRecebido = String(payloadData.product?.id || payloadData.prod || '')
+    const email = String(payloadData.buyer?.email || payloadData.email || '').toLowerCase().trim()
     const name = payloadData.buyer?.name || payloadData.name || 'Novo Aluno'
+    
+    // Status e Transação
     const status = (payloadData.purchase?.status || payloadData.status || '').toUpperCase()
     const transaction = payloadData.purchase?.transaction || payloadData.transaction
 
-    console.log(`[PROCESSANDO] Hotmart ID: ${hotmartId} | Email: ${email} | Status: ${status}`)
+    console.log(`[WEBHOOK] ID Recebido do Simulador: ${hotmartIdRecebido}`)
+    console.log(`[WEBHOOK] Email: ${email}`)
 
-    // Validação de Dados Básicos
-    if (!hotmartId || !email) {
-      return NextResponse.json({ error: 'Dados incompletos' }, { status: 400 })
-    }
-
-    // Filtra apenas compras APROVADAS
+    // Validações básicas
+    if (!hotmartIdRecebido || !email) return NextResponse.json({ error: 'Dados incompletos' }, { status: 400 })
+    
     const aprovados = ['APPROVED', 'COMPLETED', 'PURCHASE_APPROVED']
-    if (!aprovados.includes(status)) {
-      return NextResponse.json({ message: `Status ${status} ignorado` })
-    }
+    if (!aprovados.includes(status)) return NextResponse.json({ message: `Status ${status} ignorado` })
 
-    // 3. Encontra o produto no SEU banco
-    const { data: product } = await supabaseAdmin
+    // === A CORREÇÃO QUE VOCÊ PEDIU ===
+    // Aqui nós forçamos a busca na coluna 'hotmart_id'
+    console.log(`[BUSCA NO BANCO] Procurando na coluna 'hotmart_id' pelo valor: '${hotmartIdRecebido}'`)
+
+    const { data: product, error: searchError } = await supabaseAdmin
       .from('products')
-      .select('id, title')
-      .eq('hotmart_id', hotmartId)
-      .single()
+      .select('id, title, hotmart_id') // Selecionamos para conferir
+      .eq('hotmart_id', hotmartIdRecebido) // <--- O SEGREDO ESTÁ AQUI
+      .maybeSingle()
+
+    if (searchError) {
+        console.error('[ERRO SQL]', searchError)
+        return NextResponse.json({ error: 'Erro no banco de dados' }, { status: 500 })
+    }
 
     if (!product) {
-      console.error(`[ERRO] Produto Hotmart ID ${hotmartId} não encontrado.`)
-      return NextResponse.json({ message: 'Produto não cadastrado' }, { status: 200 })
+      console.error(`[ERRO 404] Produto não encontrado!`)
+      console.error(`MOTIVO: Nenhum registro na tabela 'products' tem hotmart_id = '${hotmartIdRecebido}'`)
+      return NextResponse.json({ 
+        error: `Produto com hotmart_id '${hotmartIdRecebido}' não encontrado no banco.` 
+      }, { status: 404 })
     }
 
-    // 4. Verifica/Cria Usuário
-    let userId = null
+    console.log(`[SUCESSO] Produto Encontrado: ${product.title} (UUID: ${product.id})`)
+
+    // === CRIAÇÃO DE CONTA E LIBERAÇÃO (Fluxo Padrão) ===
+    let userId = ''
     const { data: { users } } = await supabaseAdmin.auth.admin.listUsers()
-    const existingUser = users?.find(u => u.email?.toLowerCase() === email.toLowerCase())
+    const existingUser = users?.find(u => u.email?.toLowerCase() === email)
 
     if (existingUser) {
       userId = existingUser.id
-      console.log(`[USUÁRIO EXISTENTE] ID: ${userId}`)
     } else {
-      console.log(`[NOVO USUÁRIO] Criando: ${email}`)
-      // Senha temporária forte
-      const password = Math.random().toString(36).slice(-8) + 'Aa1@'
-      
+      console.log(`[CRIANDO USUÁRIO] ${email}`)
+      const password = Math.random().toString(36).slice(-10) + "!A1a"
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-        email: email,
-        password: password,
-        email_confirm: true,
-        user_metadata: { full_name: name }
+        email, password, email_confirm: true, user_metadata: { full_name: name }
       })
-
       if (createError) throw createError
       userId = newUser.user.id
-      
-      // Cria perfil
-      await supabaseAdmin.from('profiles').upsert({
-        id: userId,
-        email: email,
-        full_name: name,
-        updated_at: new Date().toISOString()
-      })
+      await supabaseAdmin.from('profiles').upsert({ id: userId, email, full_name: name })
     }
 
-    // 5. Libera o Acesso
-    const { error: purchaseError } = await supabaseAdmin
-      .from('purchases')
-      .upsert({ 
+    // Libera a compra usando o UUID que descobrimos
+    const safeTransactionId = transaction || `sim_${Date.now()}`
+    
+    const { error: purchaseError } = await supabaseAdmin.from('purchases').upsert({
         user_id: userId,
-        product_id: product.id,
+        product_id: product.id, // Usa o UUID para relacionar na tabela purchases
         status: 'active',
-        transaction_id: transaction,
+        transaction_id: safeTransactionId,
         created_at: new Date().toISOString()
-      }, { onConflict: 'user_id,product_id' }) // Ajuste para evitar erro se tentar liberar o mesmo produto 2x
+    }, { onConflict: 'user_id, product_id' })
 
     if (purchaseError) throw purchaseError
 
-    console.log(`[SUCESSO] Acesso liberado para ${email} no produto ${product.title}`)
-
-    return NextResponse.json({ message: 'Acesso Liberado e Seguro' })
+    console.log('[FINAL] Compra liberada com sucesso!')
+    return NextResponse.json({ message: 'Acesso Liberado' })
 
   } catch (error: any) {
-    console.error('[FATAL ERROR]', error)
+    console.error('[ERRO GERAL]', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

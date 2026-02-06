@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { LayoutGrid, Home } from 'lucide-react'
+import { LayoutGrid, Home, Bot, Users, GraduationCap } from 'lucide-react'
 import CourseCard from './CourseCard'
 import HeroBanner from './HeroBanner'
 import IaraChat from '@/components/IaraChat'
@@ -24,14 +24,35 @@ export default async function Dashboard() {
     supabase.from('user_saved_products').select('product_id').eq('user_id', user.id)
   ])
 
-  // Processamento IA
+  // --- LÓGICA DE SEPARAÇÃO (FILTRO) ---
+  const allProducts = productsRes.data || []
+
+  // 1. Filtra I.A.
+  const aiProducts = allProducts.filter(p => {
+    const title = p.title.toLowerCase()
+    return title.includes('i.a.') || title.includes('ai ') || title.includes('inteligência') || title.includes('chat')
+  })
+
+  // 2. Filtra Comunidade
+  const communityProducts = allProducts.filter(p => {
+    const title = p.title.toLowerCase()
+    return title.includes('comunidade') || title.includes('social') || title.includes('vip') || title.includes('networking')
+  })
+
+  // 3. Filtra Cursos
+  const courseProducts = allProducts.filter(p => {
+    const isAI = aiProducts.some(ai => ai.id === p.id)
+    const isCommunity = communityProducts.some(c => c.id === p.id)
+    return !isAI && !isCommunity
+  })
+
+  // Processamento IA e Banners
   let aiSettings = { salesLink: '#', modalTitle: 'I.A. Premium', buttonText: 'LIBERAR ACESSO' }
   if (aiConfigRes.data?.value) {
     try { aiSettings = { ...aiSettings, ...JSON.parse(aiConfigRes.data.value) } } catch (e) {}
   }
   const aiAccess = await checkAIAccess() 
 
-  // Processamento Banners (Chave: home_banners conforme seu banco)
   let bannersData = []
   if (bannerRes.data?.value) {
     try { 
@@ -48,43 +69,94 @@ export default async function Dashboard() {
       
       <main className="relative pb-32">
         
-        {/* BOTÃO HOME DISCRETO */}
-        <div className="absolute top-6 left-6 z-50">
-            <div className="w-12 h-12 bg-zinc-900/40 backdrop-blur-md rounded-2xl flex items-center justify-center border border-white/5 shadow-2xl">
-                <Home size={22} className="text-white/80" />
-            </div>
-        </div>
+        {/* REMOVIDO: O ÍCONE HOME FLUTUANTE FOI RETIRADO DAQUI */}
 
-        {/* SEÇÃO DO BANNER (DESIGN LIMPO) */}
+        {/* SEÇÃO DO BANNER */}
         <section className="w-full">
           <HeroBanner banners={bannersData} />
         </section>
 
-        <div className="max-w-[1500px] mx-auto px-6 md:px-12 mt-12 space-y-16">
+        <div className="max-w-[1500px] mx-auto px-6 md:px-12 mt-10 space-y-12">
           
-          {/* GRID DE CURSOS */}
-          <section className="space-y-8">
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <h2 className="text-2xl md:text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
-                  <LayoutGrid className="text-rose-600" size={24} /> Meus Treinamentos
-                </h2>
-                <div className="h-1 w-12 bg-rose-600 rounded-full" />
-              </div>
-            </div>
+          {/* --- SEÇÃO 1: CURSOS (Treinamentos) --- */}
+          {courseProducts.length > 0 && (
+            <section className="space-y-6">
+                <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                    {/* FONTE REDUZIDA: text-lg md:text-2xl */}
+                    <h2 className="text-lg md:text-2xl font-black uppercase italic tracking-tighter flex items-center gap-2">
+                    <GraduationCap className="text-rose-600" size={24} /> Meus Treinamentos
+                    </h2>
+                    <div className="h-0.5 w-8 bg-rose-600 rounded-full" />
+                </div>
+                </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-              {productsRes.data?.map((product) => (
-                <CourseCard 
-                  key={product.id} 
-                  product={product} 
-                  purchasedIds={purchasedIds} 
-                  completedIds={[]} 
-                  savedIds={savedIds} 
-                />
-              ))}
-            </div>
-          </section>
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+                {courseProducts.map((product) => (
+                    <CourseCard 
+                    key={product.id} 
+                    product={product} 
+                    purchasedIds={purchasedIds} 
+                    completedIds={[]} 
+                    savedIds={savedIds} 
+                    />
+                ))}
+                </div>
+            </section>
+          )}
+
+          {/* --- SEÇÃO 2: FERRAMENTAS & I.A. --- */}
+          {aiProducts.length > 0 && (
+            <section className="space-y-6">
+                <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                    <h2 className="text-lg md:text-2xl font-black uppercase italic tracking-tighter flex items-center gap-2 text-blue-400">
+                    <Bot className="text-blue-500" size={24} /> Inteligência Artificial
+                    </h2>
+                    <div className="h-0.5 w-8 bg-blue-500 rounded-full" />
+                </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+                {aiProducts.map((product) => (
+                    <CourseCard 
+                    key={product.id} 
+                    product={product} 
+                    purchasedIds={purchasedIds} 
+                    completedIds={[]} 
+                    savedIds={savedIds} 
+                    />
+                ))}
+                </div>
+            </section>
+          )}
+
+          {/* --- SEÇÃO 3: COMUNIDADE --- */}
+          {communityProducts.length > 0 && (
+            <section className="space-y-6">
+                <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                    <h2 className="text-lg md:text-2xl font-black uppercase italic tracking-tighter flex items-center gap-2 text-green-400">
+                    <Users className="text-green-500" size={24} /> Comunidade & Networking
+                    </h2>
+                    <div className="h-0.5 w-8 bg-green-500 rounded-full" />
+                </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+                {communityProducts.map((product) => (
+                    <CourseCard 
+                    key={product.id} 
+                    product={product} 
+                    purchasedIds={purchasedIds} 
+                    completedIds={[]} 
+                    savedIds={savedIds} 
+                    />
+                ))}
+                </div>
+            </section>
+          )}
+
         </div>
 
         {/* CHAT I.A. */}

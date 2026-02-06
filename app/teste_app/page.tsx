@@ -9,8 +9,8 @@ import { triggerHotmartSimulation } from './actions'
 // CONFIGURAÇÃO DOS PRODUTOS (IDs do seu Banco de Dados)
 const PRODUCTS = {
     MAIN: { id: '7065101', name: 'Curso Mestre do App', price: 97.00 },
-    UPSELL_SOCIAL: { id: 'redesocial-upsell-id', name: 'Comunidade VIP + Stories', price: 27.00 },
-    UPSELL_IA: { id: 'ia-chat-id', name: 'Acesso Chat Inteligência Artificial', price: 47.00 }
+    UPSELL_SOCIAL: { id: '7131963', name: 'Comunidade VIP + Stories', price: 27.00 },
+    UPSELL_IA: { id: '7154599', name: 'Acesso Chat Inteligência Artificial', price: 47.00 }
 }
 
 export default function HotmartCheckoutSimulator() {

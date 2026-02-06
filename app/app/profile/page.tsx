@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import SignOutButton from '@/components/SignOutButton'
 import ProfileForm from './ProfileForm'
+import { useUI } from '@/components/providers/GlobalUIProvider' // <--- 1. IMPORTAÇÃO
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<any>(null)
@@ -19,6 +20,7 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false)
 
   const supabase = createClient()
+  const { showToast } = useUI() // <--- 2. HOOK
 
   useEffect(() => {
     async function getData() {
@@ -32,6 +34,8 @@ export default function ProfilePage() {
       setProfile(data || {
         full_name: user.email?.split('@')[0],
         avatar_url: null,
+        cover_url: null, // Garante que pega a capa
+        cover_position: 50, // Garante posição padrão
         email: user.email,
         role: 'student'
       })
@@ -48,6 +52,11 @@ export default function ProfilePage() {
     }
     getData()
   }, [])
+
+  // Ação do botão da câmera (Visualização)
+  const handlePhotoClick = () => {
+      showToast('Para alterar a foto ou capa, clique em "Editar Perfil".', 'info')
+  }
 
   if (loading) return <div className="min-h-screen bg-[#09090B] flex items-center justify-center text-zinc-500 animate-pulse">Carregando...</div>
 
@@ -76,10 +85,25 @@ export default function ProfilePage() {
         
         {/* CAPA + CABEÇALHO */}
         <div className="relative mb-24">
-            {/* Capa */}
-            <div className={`h-48 md:h-64 md:rounded-b-3xl relative overflow-hidden ${isPremium ? 'bg-gradient-to-r from-rose-900 via-purple-900 to-[#0F0F10]' : 'bg-gradient-to-b from-zinc-800 to-[#0F0F10]'}`}>
-                <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-                {isPremium && <div className="absolute top-4 right-4 bg-rose-600 text-white text-[10px] font-bold uppercase px-3 py-1 rounded-full shadow-lg border border-white/10 flex items-center gap-1"><Zap size={10} fill="currentColor"/> Membro Elite</div>}
+            
+            {/* 3. CAPA DINÂMICA COM POSIÇÃO */}
+            <div className={`h-48 md:h-64 md:rounded-b-3xl relative overflow-hidden bg-zinc-900 border-b border-white/5`}>
+                {profile?.cover_url ? (
+                    <img 
+                        src={profile.cover_url} 
+                        className="w-full h-full object-cover"
+                        // AQUI ESTÁ A MÁGICA: Aplica a posição Y salva no banco (0-100%)
+                        style={{ objectPosition: `center ${profile.cover_position || 50}%` }}
+                        alt="Capa do perfil"
+                    />
+                ) : (
+                    // Fallback se não tiver capa (Gradiente original)
+                    <div className={`absolute inset-0 ${isPremium ? 'bg-gradient-to-r from-rose-900 via-purple-900 to-[#0F0F10]' : 'bg-gradient-to-b from-zinc-800 to-[#0F0F10]'}`}>
+                        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+                    </div>
+                )}
+
+                {isPremium && <div className="absolute top-4 right-4 bg-rose-600 text-white text-[10px] font-bold uppercase px-3 py-1 rounded-full shadow-lg border border-white/10 flex items-center gap-1 z-10"><Zap size={10} fill="currentColor"/> Membro Elite</div>}
             </div>
 
             {/* Avatar e Infos */}
@@ -92,8 +116,11 @@ export default function ProfilePage() {
                             className="w-full h-full object-cover"
                         />
                     </div>
-                    {/* Botão de Trocar Foto (Só visual por enquanto) */}
-                    <div className="absolute bottom-2 right-2 bg-zinc-900 text-white p-2 rounded-full border border-white/10 shadow-lg cursor-pointer hover:bg-rose-600 transition">
+                    {/* Botão de Trocar Foto (Com Toast) */}
+                    <div 
+                        onClick={handlePhotoClick}
+                        className="absolute bottom-2 right-2 bg-zinc-900 text-white p-2 rounded-full border border-white/10 shadow-lg cursor-pointer hover:bg-rose-600 transition"
+                    >
                         <Camera size={16} />
                     </div>
                 </div>
@@ -202,7 +229,6 @@ export default function ProfilePage() {
                         </div>
                     </div>
                 </div>
-
             </div>
 
         </div>

@@ -253,16 +253,32 @@ export async function toggleProductSave(productId: string, isSaved: boolean) {
   revalidateAll()
 }
 
-// --- PERFIL E ACESSO ---
+// --- PERFIL E ACESSO (ATUALIZADA) ---
 export async function updateProfile(formData: FormData) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Não autorizado' }
-  const updates: any = { full_name: formData.get('full_name'), updated_at: new Date().toISOString() }
-  const avatar_url = formData.get('avatar_url') as string
-  if (avatar_url) updates.avatar_url = avatar_url
+  
+  // Extrai dados do Form
+  const fullName = formData.get('full_name') as string
+  const avatarUrl = formData.get('avatar_url') as string
+  const coverUrl = formData.get('cover_url') as string // NOVO
+  const coverPosition = formData.get('cover_position') // NOVO
+
+  const updates: any = { 
+    full_name: fullName, 
+    updated_at: new Date().toISOString() 
+  }
+
+  // Só adiciona se houver valor (para não sobrescrever com vazio se não for enviado)
+  if (avatarUrl) updates.avatar_url = avatarUrl
+  if (coverUrl) updates.cover_url = coverUrl 
+  if (coverPosition) updates.cover_position = parseInt(coverPosition.toString()) 
+
   const { error } = await supabase.from('profiles').update(updates).eq('id', user.id)
+  
   if (error) return { error: error.message }
+  
   revalidateAll()
   return { success: true }
 }
@@ -467,4 +483,33 @@ export async function getAISettings() {
   const supabase = await createClient()
   const { data: config } = await supabase.from('site_config').select('value').eq('key', 'ai_config').maybeSingle()
   return typeof config?.value === 'string' ? JSON.parse(config.value) : config?.value
+}
+
+// --- CHAT: USUÁRIO -> USUÁRIO (MANTIDO) ---
+export async function sendDirectMessage(receiverId: string, content: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Não autorizado' }
+
+  const { error } = await supabase.from('direct_messages').insert({
+    sender_id: user.id,
+    receiver_id: receiverId,
+    content: content,
+    read: false
+  })
+
+  if (error) {
+      console.error("Erro ao enviar DM:", error)
+      throw new Error(error.message)
+  }
+  
+  // Opcional: Criar notificação para o recebedor
+  await supabase.from('notifications').insert({
+      user_id: receiverId,
+      title: "Nova mensagem",
+      message: "Você recebeu uma mensagem privada.",
+      link: `/app/chat/direct/${user.id}?type=user`
+  })
+
+  return { success: true }
 }

@@ -5,10 +5,14 @@ import { Home, Users, PlayCircle, User, Bot } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
+import LanguageSwitcher from '@/components/LanguageSwitcher' // Certifique-se que o caminho está correto
 
 export default function MobileMenu() {
   const pathname = usePathname()
   const [activeTab, setActiveTab] = useState(pathname || '#')
+
+  // 1. VERIFICAÇÃO DE ROTA: Se estiver no chat, esconde o menu
+  const isChatPage = pathname?.includes('/app/chat/direct')
 
   useEffect(() => {
     if (pathname) setActiveTab(pathname)
@@ -16,8 +20,10 @@ export default function MobileMenu() {
 
   const tabs = useMemo(() => [
     { id: 'home', icon: Home, path: '/app' },
-    { id: 'community', icon: Users, path: '/app/comunidade' }, 
-    { id: 'ai', icon: Bot, path: '#', isMain: true }, // BOTÃO DA IARA
+    { id: 'community', icon: Users, path: '/app/comunidade' },
+    // 2. ITEM ESPECIAL: TRADUTOR (Não é link, é componente)
+    { id: 'translate', icon: null, path: '#' }, 
+    { id: 'ai', icon: Bot, path: '#', isMain: true }, // BOTÃO DA IARA (Central)
     { id: 'courses', icon: PlayCircle, path: '/app/view/all' }, 
     { id: 'profile', icon: User, path: '/app/profile' },
   ], [])
@@ -29,13 +35,15 @@ export default function MobileMenu() {
     }
   }
 
-  // Lógica para garantir que a animação da luz siga o item ativo
+  // Se for página de chat, não renderiza nada
+  if (isChatPage) return null
+
+  // Cálculo da posição da luz (Ajustado para 6 colunas)
+  // 100% / 6 itens = ~16.66% por item. O centro do item é +8.33%
   const activeIndex = tabs.findIndex(tab => tab.path === activeTab)
-  
-  // Se não encontrar a rota (ex: sub-página), mantém a luz no centro (Botão IA - índice 2)
-  // Ou tenta aproximar se for uma sub-rota conhecida
-  const safeIndex = activeIndex === -1 ? 2 : activeIndex
-  const positionPercent = `${(safeIndex * 20) + 10}%`
+  // Se não achar a aba (ex: sub-rota), joga a luz para o botão I.A. (índice 3)
+  const safeIndex = activeIndex === -1 ? 3 : activeIndex 
+  const positionPercent = `${(safeIndex * 16.66) + 8.33}%`
 
   return (
     <div className="md:hidden fixed bottom-0 left-0 right-0 z-[80]">
@@ -59,27 +67,41 @@ export default function MobileMenu() {
         </div>
 
         {/* Ícones */}
-        <div className="absolute inset-0 z-20 flex justify-between items-end px-6 pb-4">
-            {tabs.map((tab) => {
-                const isActive = activeTab === tab.path || (tab.path !== '#' && activeTab.startsWith(tab.path))
-                const Icon = tab.icon
-                
-                if (tab.isMain) {
-                    return (
-                        <div key={tab.id} className="absolute left-1/2 -translate-x-1/2 -top-6">
-                            <button onClick={handleAiClick} className="w-14 h-14 rounded-full flex items-center justify-center border-4 border-[#0F0F10] bg-rose-600 text-white shadow-xl active:scale-90 transition-transform">
-                                <Icon size={28} />
-                            </button>
-                        </div>
-                    )
-                }
+        <div className="absolute inset-0 z-20 flex justify-between items-end px-4 pb-4">
+            {/* 1. HOME */}
+            <Link href="/app" className={`flex flex-col items-center justify-end pb-2 w-10 transition-all ${activeTab === '/app' ? 'text-white' : 'text-zinc-600'}`}>
+                <Home size={22} strokeWidth={activeTab === '/app' ? 3 : 2} />
+            </Link>
 
-                return (
-                    <Link key={tab.id} href={tab.path} className={`flex flex-col items-center justify-end pb-2 w-12 h-12 transition-all ${isActive ? 'text-white' : 'text-zinc-600'}`}>
-                        <Icon size={22} strokeWidth={isActive ? 3 : 2} />
-                    </Link>
-                )
-            })}
+            {/* 2. COMUNIDADE */}
+            <Link href="/app/comunidade" className={`flex flex-col items-center justify-end pb-2 w-10 transition-all ${activeTab === '/app/comunidade' ? 'text-white' : 'text-zinc-600'}`}>
+                <Users size={22} strokeWidth={activeTab === '/app/comunidade' ? 3 : 2} />
+            </Link>
+
+            {/* 3. TRADUTOR (NOVO LUGAR) */}
+            <div className="flex flex-col items-center justify-end pb-1 w-10">
+                <LanguageSwitcher isMobile={true} />
+            </div>
+
+            {/* 4. IA (CENTRAL) */}
+            <div className="absolute left-1/2 -translate-x-1/2 -top-6">
+                <button onClick={handleAiClick} className="w-14 h-14 rounded-full flex items-center justify-center border-4 border-[#0F0F10] bg-rose-600 text-white shadow-xl active:scale-90 transition-transform">
+                    <Bot size={28} />
+                </button>
+            </div>
+            
+            {/* Espaço vazio para pular o botão central no flex layout */}
+            <div className="w-10"></div> 
+
+            {/* 5. CURSOS */}
+            <Link href="/app/view/all" className={`flex flex-col items-center justify-end pb-2 w-10 transition-all ${activeTab === '/app/view/all' ? 'text-white' : 'text-zinc-600'}`}>
+                <PlayCircle size={22} strokeWidth={activeTab === '/app/view/all' ? 3 : 2} />
+            </Link>
+
+            {/* 6. PERFIL */}
+            <Link href="/app/profile" className={`flex flex-col items-center justify-end pb-2 w-10 transition-all ${activeTab === '/app/profile' ? 'text-white' : 'text-zinc-600'}`}>
+                <User size={22} strokeWidth={activeTab === '/app/profile' ? 3 : 2} />
+            </Link>
         </div>
       </div>
     </div>

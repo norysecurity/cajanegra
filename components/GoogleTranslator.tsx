@@ -21,7 +21,7 @@ export default function GoogleTranslator() {
       )
     }
 
-    // 2. Injeção do Script com Verificação
+    // 2. Injeção do Script
     if (!document.getElementById('google-translate-script')) {
       const script = document.createElement('script')
       script.id = 'google-translate-script'
@@ -30,7 +30,7 @@ export default function GoogleTranslator() {
       document.body.appendChild(script)
     }
 
-    // 3. Polling para verificar se o Google injetou o seletor
+    // 3. Verificação
     const checkReady = setInterval(() => {
       const select = document.querySelector('.goog-te-combo')
       if (select) {
@@ -39,15 +39,11 @@ export default function GoogleTranslator() {
       }
     }, 500)
 
-    // 4. Timeout de Segurança: Se em 10s não carregar, para o loader (evita trava infinita)
     const timeout = setTimeout(() => {
-      if (!isReady) {
-        clearInterval(checkReady)
-        // Opcional: setIsReady(true) aqui permitiria mostrar os botões mesmo com erro
-      }
+      if (!isReady) clearInterval(checkReady)
     }, 10000)
 
-    // 5. CSS para esconder barras indesejadas do Google
+    // 4. CSS para esconder barras
     const style = document.createElement('style')
     style.innerHTML = `
       .goog-te-banner-frame.skiptranslate, .goog-te-gadget-icon { display: none !important; }
@@ -76,42 +72,46 @@ export default function GoogleTranslator() {
 
   return (
     <>
-      <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end gap-3">
+      {/* ALTERAÇÃO AQUI: 
+          - 'hidden': Esconde o botão por padrão (no mobile).
+          - 'md:flex': Mostra o botão (display: flex) apenas em telas médias ou maiores (PC/Tablet).
+      */}
+      <div className="hidden md:flex fixed bottom-4 left-4 z-[9999] flex-col items-start gap-2">
         {isOpen && (
-          <div className="bg-[#121214] border border-white/10 p-4 rounded-3xl shadow-2xl animate-in fade-in zoom-in duration-200 w-48 mb-2">
-            <div className="flex justify-between items-center mb-4 px-1">
-              <span className="text-[10px] font-black uppercase text-rose-600 tracking-widest">Traduzir App</span>
+          <div className="bg-[#121214] border border-white/10 p-3 rounded-2xl shadow-xl animate-in fade-in zoom-in duration-200 w-40 mb-1 backdrop-blur-md">
+            <div className="flex justify-between items-center mb-3 px-1">
+              <span className="text-[9px] font-black uppercase text-zinc-400 tracking-widest">Traduzir</span>
               <button onClick={() => setIsOpen(false)} className="text-zinc-500 hover:text-white transition-colors">
-                <X size={14}/>
+                <X size={12}/>
               </button>
             </div>
 
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1.5">
               {isReady ? (
                 <>
                   <button 
                     onClick={() => translateTo('en')}
-                    className="w-full py-3 bg-white/5 hover:bg-rose-600 text-white text-[11px] font-bold rounded-xl transition-all uppercase tracking-widest active:scale-95 flex items-center justify-center gap-2"
+                    className="w-full py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-[10px] font-bold rounded-lg transition-all uppercase tracking-widest active:scale-95 flex items-center justify-center gap-2"
                   >
                     🇺🇸 English
                   </button>
                   <button 
                     onClick={() => translateTo('es')}
-                    className="w-full py-3 bg-white/5 hover:bg-rose-600 text-white text-[11px] font-bold rounded-xl transition-all uppercase tracking-widest active:scale-95 flex items-center justify-center gap-2"
+                    className="w-full py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-[10px] font-bold rounded-lg transition-all uppercase tracking-widest active:scale-95 flex items-center justify-center gap-2"
                   >
                     🇪🇸 Español
                   </button>
                   <button 
                     onClick={() => translateTo('pt')}
-                    className="w-full py-2 mt-1 text-zinc-500 text-[9px] font-black uppercase hover:text-white transition-colors tracking-widest"
+                    className="w-full py-1.5 mt-1 text-zinc-500 text-[8px] font-black uppercase hover:text-white transition-colors tracking-widest"
                   >
                     Original (PT)
                   </button>
                 </>
               ) : (
-                <div className="flex flex-col items-center py-4 gap-2">
-                  <Loader2 size={20} className="animate-spin text-rose-600" />
-                  <span className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">Sincronizando...</span>
+                <div className="flex flex-col items-center py-2 gap-1">
+                  <Loader2 size={16} className="animate-spin text-zinc-500" />
+                  <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest">...</span>
                 </div>
               )}
             </div>
@@ -120,11 +120,11 @@ export default function GoogleTranslator() {
 
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className={`w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all active:scale-90 border-2 border-white/5 ${
-            isOpen ? 'bg-white text-black' : 'bg-rose-600 text-white shadow-rose-600/20'
+          className={`w-9 h-9 rounded-full shadow-lg flex items-center justify-center transition-all active:scale-90 border border-white/10 backdrop-blur-sm ${
+            isOpen ? 'bg-white text-black' : 'bg-zinc-900/80 text-zinc-400 hover:text-white'
           }`}
         >
-          <Languages size={24} />
+          <Languages size={16} />
         </button>
       </div>
 
